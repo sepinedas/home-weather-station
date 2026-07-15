@@ -1,0 +1,19 @@
+menu "E-paper Clock Configuration"
+
+config CLOCK_WIFI_SSID
+    string "WiFi SSID"
+    default "myssid"
+
+config CLOCK_WIFI_PASSWORD
+    string "WiFi Password"
+    default "mypassword"
+
+config CLOCK_TZ
+    string "POSIX timezone string"
+    default "CST6"
+    help
+        Examples: "CST6" (Costa Rica, UTC-6),
+        "EST5EDT,M3.2.0,M11.1.0" (US Eastern),
+        "CET-1CEST,M3.5.0,M10.5.0/3" (Central Europe).
+
+endmenu
