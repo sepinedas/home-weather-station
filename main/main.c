@@ -29,7 +29,12 @@
 
 static const char *TAG = "epaper_clock";
 
-#define FULL_REFRESH_EVERY  10      /* partial refreshes between full ones */
+/* EPD_Display_Part()'s RAM-window addressing doesn't appear to account
+ * for this panel's logical->physical rotation (see README caveat), so
+ * default to always doing the full (flashing) refresh until that's
+ * verified safe on real hardware. Raise this once partial refresh is
+ * confirmed to render correctly. */
+#define FULL_REFRESH_EVERY  1
 
 static EventGroupHandle_t s_wifi_events;
 #define WIFI_CONNECTED_BIT  BIT0
