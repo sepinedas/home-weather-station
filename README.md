@@ -7,11 +7,13 @@ partial-refresh caveat below for why it currently always does a full
 (flashing) refresh rather than a fast partial one.
 
 The UI is built with [LVGL](https://lvgl.io/) (`lvgl/lvgl`, pinned to
-`9.2.2`): `main.c` creates three `lv_label` widgets (time, date, AM/PM)
-styled with built-in Montserrat fonts. Panel power/SPI/refresh is
-delegated to the
-[`antunesls/crowpanel_epaper_driver_component`](https://github.com/antunesls/crowpanel_epaper_driver_component)
-managed component (see `main/idf_component.yml` for both dependencies).
+`9.2.2`, managed via `main/idf_component.yml`): `main.c` creates three
+`lv_label` widgets (time, date, AM/PM) styled with built-in Montserrat
+fonts. Panel power/SPI/refresh is delegated to
+[`antunesls/crowpanel_epaper_driver_component`](https://github.com/antunesls/crowpanel_epaper_driver_component),
+vendored (with one small patch) under
+`components/crowpanel_epaper_driver_component` — see that directory's
+README for why it's vendored instead of a managed dependency.
 
 LVGL renders into an 8-bit grayscale (`LV_COLOR_FORMAT_L8`) buffer;
 a flush callback (`epd_flush_cb` in `main.c`) thresholds each pixel and
@@ -49,9 +51,8 @@ idf.py menuconfig      # E-paper Clock Configuration -> WiFi SSID/password, time
 idf.py flash monitor
 ```
 
-The build fetches `crowpanel_epaper_driver_component` and `lvgl` from
-the ESP Component Registry on first configure (requires network access
-from the build machine).
+The build fetches `lvgl` from the ESP Component Registry on first
+configure (requires network access from the build machine).
 
 Tested layout: ESP-IDF v5.x. If WiFi/SNTP fails, the clock still runs
 but starts from the epoch until time is synced.
