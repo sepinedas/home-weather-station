@@ -2,9 +2,12 @@
  * CrowPanel ESP32-S3 2.13" e-paper clock (ESP-IDF)
  *
  * - Connects to WiFi and syncs time via SNTP
- * - Draws HH:MM as large seven-segment digits, date below
+ * - Draws HH:MM (12-hour, with AM/PM) as large seven-segment digits,
+ *   date below
  * - Partial refresh every minute, full refresh every N partials
  *   to clean up ghosting
+ * - Rendering/panel control delegated to the
+ *   antunesls/crowpanel_epaper_driver_component managed component
  */
 #include <stdio.h>
 #include <stdbool.h>
@@ -22,7 +25,7 @@
 #include "esp_sntp.h"
 #include "nvs_flash.h"
 
-#include "epd213.h"
+#include "epaper_driver.h"
 
 static const char *TAG = "epaper_clock";
 
@@ -31,7 +34,7 @@ static const char *TAG = "epaper_clock";
 static EventGroupHandle_t s_wifi_events;
 #define WIFI_CONNECTED_BIT  BIT0
 
-static uint8_t s_fb[EPD_BUF_SIZE];
+static uint8_t s_fb[((EPD_W + 7) / 8) * EPD_H];
 
 /* ------------------------------------------------------------------ */
 /* WiFi + SNTP                                                         */
@@ -102,14 +105,65 @@ static bool sync_time(void)
 /* Rendering                                                           */
 /* ------------------------------------------------------------------ */
 
+/* Segment bits: A=top, B=top-right, C=bottom-right, D=bottom,
+                 E=bottom-left, F=top-left, G=middle */
+enum { SA = 1, SB = 2, SC = 4, SD = 8, SE = 16, SF = 32, SG = 64 };
+
+static const uint8_t seg_map[10] = {
+    /* 0 */ SA | SB | SC | SD | SE | SF,
+    /* 1 */ SB | SC,
+    /* 2 */ SA | SB | SG | SE | SD,
+    /* 3 */ SA | SB | SG | SC | SD,
+    /* 4 */ SF | SG | SB | SC,
+    /* 5 */ SA | SF | SG | SC | SD,
+    /* 6 */ SA | SF | SG | SE | SC | SD,
+    /* 7 */ SA | SB | SC,
+    /* 8 */ SA | SB | SC | SD | SE | SF | SG,
+    /* 9 */ SA | SB | SC | SD | SF | SG,
+};
+
+/* EPD_DrawRectangle takes inclusive end coordinates; wrap it so callers
+ * can keep thinking in x,y,w,h like the old fb_fill_rect helper did. */
+static void fill_rect(int x, int y, int w, int h, uint16_t color)
+{
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+    EPD_DrawRectangle(x, y, x + w - 1, y + h, color, 1);
+}
+
+static void draw_7seg_digit(int x, int y, int w, int h, int t, int d)
+{
+    if (d < 0 || d > 9) {
+        return;
+    }
+    uint8_t s = seg_map[d];
+    int half = (h - t) / 2;         /* y offset of the middle segment */
+
+    if (s & SA) fill_rect(x + t, y,             w - 2 * t, t, BLACK);
+    if (s & SG) fill_rect(x + t, y + half,      w - 2 * t, t, BLACK);
+    if (s & SD) fill_rect(x + t, y + h - t,     w - 2 * t, t, BLACK);
+    if (s & SF) fill_rect(x,         y + t,        t, half - t, BLACK);
+    if (s & SB) fill_rect(x + w - t, y + t,        t, half - t, BLACK);
+    if (s & SE) fill_rect(x,         y + half + t, t, h - half - 2 * t, BLACK);
+    if (s & SC) fill_rect(x + w - t, y + half + t, t, h - half - 2 * t, BLACK);
+}
+
+static void draw_colon(int x, int y, int size)
+{
+    fill_rect(x, y,            size, size, BLACK);
+    fill_rect(x, y + 3 * size, size, size, BLACK);
+}
+
 static void render_clock(const struct tm *t)
 {
-    fb_clear(s_fb, EPD_COLOR_WHITE);
+    Paint_NewImage(s_fb, EPD_W, EPD_H, ROTATE_0, WHITE);
+    EPD_Full(WHITE);
 
     /* Big HH:MM - digits 44x78, thickness 9 */
     const int dw = 44, dh = 78, th = 9, gap = 10, colon_w = 10;
     const int total = 4 * dw + 3 * gap + colon_w;   /* 216 px */
-    int x = (EPD_WIDTH - total) / 2;
+    int x = (EPD_W - total) / 2;
     const int y = 8;
 
     bool is_pm = t->tm_hour >= 12;
@@ -119,12 +173,12 @@ static void render_clock(const struct tm *t)
     }
     int mm = t->tm_min;
 
-    fb_draw_7seg_digit(s_fb, x, y, dw, dh, th, hh / 10);  x += dw + gap;
-    fb_draw_7seg_digit(s_fb, x, y, dw, dh, th, hh % 10);  x += dw + gap;
-    fb_draw_colon(s_fb, x, y + dh / 2 - 2 * colon_w, colon_w);
+    draw_7seg_digit(x, y, dw, dh, th, hh / 10);  x += dw + gap;
+    draw_7seg_digit(x, y, dw, dh, th, hh % 10);  x += dw + gap;
+    draw_colon(x, y + dh / 2 - 2 * colon_w, colon_w);
     x += colon_w + gap;
-    fb_draw_7seg_digit(s_fb, x, y, dw, dh, th, mm / 10);  x += dw + gap;
-    fb_draw_7seg_digit(s_fb, x, y, dw, dh, th, mm % 10);
+    draw_7seg_digit(x, y, dw, dh, th, mm / 10);  x += dw + gap;
+    draw_7seg_digit(x, y, dw, dh, th, mm % 10);
 
     /* Small DD-MM-YYYY under the clock - digits 12x20, thickness 3 */
     const int sw = 12, sh = 20, st = 3, sg = 4, dash_w = 8;
@@ -133,17 +187,18 @@ static void render_clock(const struct tm *t)
                       (yy / 1000) % 10, (yy / 100) % 10,
                       (yy / 10) % 10, yy % 10 };
     const int date_total = 8 * sw + 7 * sg + 2 * (dash_w + sg);
-    int dx = (EPD_WIDTH - date_total) / 2;
+    int dx = (EPD_W - date_total) / 2;
     const int dy = 96;
 
-    /* AM/PM indicator in the margin to the right of the date */
-    fb_draw_ampm(s_fb, dx + date_total + sg + 10, dy + (sh - 7 * 2) / 2, is_pm);
+    /* AM/PM indicator (8x16 font) in the margin to the right of the date */
+    EPD_ShowString(dx + date_total + sg + 10, dy + (sh - 16) / 2,
+                   is_pm ? "PM" : "AM", 16, BLACK);
 
     for (int i = 0; i < 8; i++) {
-        fb_draw_7seg_digit(s_fb, dx, dy, sw, sh, st, digits[i]);
+        draw_7seg_digit(dx, dy, sw, sh, st, digits[i]);
         dx += sw + sg;
         if (i == 1 || i == 3) {   /* dash after DD and MM */
-            fb_fill_rect(s_fb, dx, dy + sh / 2 - 1, dash_w, st, EPD_COLOR_BLACK);
+            fill_rect(dx, dy + sh / 2 - 1, dash_w, st, BLACK);
             dx += dash_w + sg;
         }
     }
@@ -176,12 +231,10 @@ void app_main(void)
         ESP_LOGW(TAG, "SNTP failed, clock will start from epoch");
     }
 
-    /* Bring up the panel: power, init, white it out once */
-    epd_power_on();
-    epd_init();
-    epd_fill(EPD_COLOR_WHITE);
-    epd_update_full();
-    epd_clear_prev_ram();
+    /* Bring up the panel: power, GPIO/SPI, then blank it out once
+     * (EPD_Clear() runs its own EPD_Init() and does a full refresh). */
+    EPD_GPIOInit();
+    EPD_Clear();
 
     int part_count = 0;
     int last_min = -1;
@@ -196,22 +249,16 @@ void app_main(void)
             last_min = t.tm_min;
             render_clock(&t);
 
-            epd_init();                    /* wake from deep sleep */
-            epd_write_image(s_fb);
+            EPD_Init();                    /* wake from deep sleep */
 
             if (part_count == 0) {
-                epd_update_full();
+                EPD_Display(s_fb);          /* full (flashing) refresh */
             } else {
-                epd_update_partial();
+                EPD_Display_Part(0, 0, EPD_W, EPD_H, s_fb);  /* fast partial refresh */
             }
-            /* Sync the controller's "previous image" RAM to what's actually
-             * on screen now, so the next partial refresh diffs against the
-             * real panel state instead of a stale frame - otherwise old
-             * segments never fully clear and ghost behind the new digits. */
-            epd_write_prev_image(s_fb);
             part_count = (part_count + 1) % FULL_REFRESH_EVERY;
 
-            epd_sleep();
+            EPD_Sleep();
             ESP_LOGI(TAG, "displayed %02d:%02d", t.tm_hour, t.tm_min);
         }
 
