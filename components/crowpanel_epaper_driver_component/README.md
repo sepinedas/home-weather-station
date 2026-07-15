@@ -8,19 +8,25 @@ depending on the ESP Component Registry package.
 ## Why vendored instead of a managed dependency
 
 The upstream `CMakeLists.txt` only declares `REQUIRES driver`, but on
-this project's ESP-IDF version `driver/gpio.h` is only resolved via the
-separate `esp_driver_gpio` component (this project's own `main`
-component already needed both, see its `CMakeLists.txt`). Depending on
-the managed package as-is fails with:
+this project's ESP-IDF version the legacy `driver/*.h` headers
+`epaper_driver.c` includes are only resolved via the separate
+`esp_driver_gpio` and `esp_driver_spi` components (this project's own
+`main` component already needed `esp_driver_gpio`, see its
+`CMakeLists.txt`). Depending on the managed package as-is fails first
+on GPIO, then on SPI, once the first error is worked around:
 
 ```
 managed_components/antunesls__crowpanel_epaper_driver_component/epaper_driver.c:5:10:
 fatal error: driver/gpio.h: No such file or directory
+
+managed_components/antunesls__crowpanel_epaper_driver_component/epaper_driver.c:6:10:
+fatal error: driver/spi_master.h: No such file or directory
 ```
 
-The only change from upstream is adding `esp_driver_gpio` to
-`CMakeLists.txt`'s `REQUIRES`. Everything else (`epaper_driver.c`,
-`epaper_fonts_data.c`, `include/`, `Kconfig`) is an unmodified copy.
+The only change from upstream is adding `esp_driver_gpio` and
+`esp_driver_spi` to `CMakeLists.txt`'s `REQUIRES`. Everything else
+(`epaper_driver.c`, `epaper_fonts_data.c`, `include/`, `Kconfig`) is an
+unmodified copy.
 
 If upstream fixes this in a future release, this vendored copy can be
 dropped in favor of the managed dependency again (re-add it to
