@@ -44,9 +44,16 @@ void epd_sleep(void);             /* deep sleep mode 1 (RAM retained)     */
 
 /* Refresh */
 void epd_fill(uint8_t color);                 /* fill controller RAM directly */
-void epd_clear_prev_ram(void);                /* clear 0x26 RAM (needed once
-                                                 before partial refresh)      */
+void epd_clear_prev_ram(void);                /* blank 0x26 RAM (needed once
+                                                 before the very first
+                                                 partial refresh)             */
 void epd_write_image(const uint8_t *fb);      /* send framebuffer to 0x24     */
+void epd_write_prev_image(const uint8_t *fb); /* sync 0x26 to fb so the next
+                                                 partial refresh diffs
+                                                 against what's actually on
+                                                 the panel (avoids ghosting
+                                                 of previously drawn
+                                                 segments)                    */
 void epd_update_full(void);                   /* global (flashing) refresh    */
 void epd_update_partial(void);                /* fast partial refresh         */
 
@@ -63,6 +70,9 @@ void fb_fill_rect(uint8_t *fb, int x, int y, int w, int h, uint8_t color);
  */
 void fb_draw_7seg_digit(uint8_t *fb, int x, int y, int w, int h, int t, int d);
 void fb_draw_colon(uint8_t *fb, int x, int y, int size);
+
+/* Small "AM"/"PM" indicator (5x7 bitmap font, scaled 2x -> 12x18 px). */
+void fb_draw_ampm(uint8_t *fb, int x, int y, bool is_pm);
 
 #ifdef __cplusplus
 }

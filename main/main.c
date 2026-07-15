@@ -7,6 +7,7 @@
  *   to clean up ghosting
  */
 #include <stdio.h>
+#include <stdbool.h>
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
@@ -111,7 +112,12 @@ static void render_clock(const struct tm *t)
     int x = (EPD_WIDTH - total) / 2;
     const int y = 8;
 
-    int hh = t->tm_hour, mm = t->tm_min;
+    bool is_pm = t->tm_hour >= 12;
+    int hh = t->tm_hour % 12;
+    if (hh == 0) {
+        hh = 12;
+    }
+    int mm = t->tm_min;
 
     fb_draw_7seg_digit(s_fb, x, y, dw, dh, th, hh / 10);  x += dw + gap;
     fb_draw_7seg_digit(s_fb, x, y, dw, dh, th, hh % 10);  x += dw + gap;
@@ -129,6 +135,9 @@ static void render_clock(const struct tm *t)
     const int date_total = 8 * sw + 7 * sg + 2 * (dash_w + sg);
     int dx = (EPD_WIDTH - date_total) / 2;
     const int dy = 96;
+
+    /* AM/PM indicator in the margin to the right of the date */
+    fb_draw_ampm(s_fb, dx + date_total + sg + 10, dy + (sh - 7 * 2) / 2, is_pm);
 
     for (int i = 0; i < 8; i++) {
         fb_draw_7seg_digit(s_fb, dx, dy, sw, sh, st, digits[i]);
@@ -192,10 +201,14 @@ void app_main(void)
 
             if (part_count == 0) {
                 epd_update_full();
-                epd_clear_prev_ram();      /* keep partial mode clean */
             } else {
                 epd_update_partial();
             }
+            /* Sync the controller's "previous image" RAM to what's actually
+             * on screen now, so the next partial refresh diffs against the
+             * real panel state instead of a stale frame - otherwise old
+             * segments never fully clear and ghost behind the new digits. */
+            epd_write_prev_image(s_fb);
             part_count = (part_count + 1) % FULL_REFRESH_EVERY;
 
             epd_sleep();

@@ -1,9 +1,11 @@
 # CrowPanel ESP32-S3 2.13" E-Paper Clock (ESP-IDF)
 
-Displays the current time (HH:MM, seven-segment style) and date on the
-Elecrow CrowPanel 2.13" e-paper HMI (122x250, SSD1680Z). Time is synced
-via WiFi/SNTP. Partial refresh every minute; a full refresh every 10
-updates clears ghosting.
+Displays the current time (12-hour HH:MM with an AM/PM indicator,
+seven-segment style) and date on the Elecrow CrowPanel 2.13" e-paper HMI
+(122x250, SSD1680Z). Time is synced via WiFi/SNTP. Partial refresh every
+minute; a full refresh every 10 updates clears ghosting, and the
+controller's previous-image RAM is re-synced after every refresh so
+stale digit segments don't linger between updates.
 
 ## Pinout (fixed on this board)
 | Signal | GPIO |
