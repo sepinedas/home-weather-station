@@ -1,3 +1,5 @@
 dependencies:
   antunesls/crowpanel_epaper_driver_component:
     version: "^1.1.0"
+  lvgl/lvgl:
+    version: "9.2.2"

@@ -2,12 +2,14 @@
  * CrowPanel ESP32-S3 2.13" e-paper clock (ESP-IDF)
  *
  * - Connects to WiFi and syncs time via SNTP
- * - Draws HH:MM (12-hour, with AM/PM) as large seven-segment digits,
- *   date below
+ * - Draws HH:MM (12-hour, with AM/PM) and the date using LVGL labels
  * - Partial refresh every minute, full refresh every N partials
  *   to clean up ghosting
- * - Rendering/panel control delegated to the
- *   antunesls/crowpanel_epaper_driver_component managed component
+ * - UI built with LVGL (lvgl/lvgl); panel power/SPI/refresh delegated
+ *   to the antunesls/crowpanel_epaper_driver_component managed
+ *   component. LVGL's software renderer draws into an 8-bit grayscale
+ *   (L8) buffer, and our flush callback thresholds each pixel into the
+ *   component's 1bpp Paint image via Paint_SetPixel().
  */
 #include <stdio.h>
 #include <stdbool.h>
@@ -23,9 +25,11 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_sntp.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 
 #include "epaper_driver.h"
+#include "lvgl.h"
 
 static const char *TAG = "epaper_clock";
 
@@ -39,7 +43,13 @@ static const char *TAG = "epaper_clock";
 static EventGroupHandle_t s_wifi_events;
 #define WIFI_CONNECTED_BIT  BIT0
 
-static uint8_t s_fb[((EPD_W + 7) / 8) * EPD_H];
+static uint8_t s_fb[((EPD_W + 7) / 8) * EPD_H];        /* packed 1bpp, for the crowpanel component */
+static uint8_t s_lv_buf[EPD_W * EPD_H] __attribute__((aligned(4)));  /* LVGL L8 render buffer */
+
+static lv_display_t *s_disp;
+static lv_obj_t *s_time_label;
+static lv_obj_t *s_ampm_label;
+static lv_obj_t *s_date_label;
 
 /* ------------------------------------------------------------------ */
 /* WiFi + SNTP                                                         */
@@ -107,106 +117,82 @@ static bool sync_time(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Rendering                                                           */
+/* LVGL <-> e-paper bridge                                             */
 /* ------------------------------------------------------------------ */
 
-/* Segment bits: A=top, B=top-right, C=bottom-right, D=bottom,
-                 E=bottom-left, F=top-left, G=middle */
-enum { SA = 1, SB = 2, SC = 4, SD = 8, SE = 16, SF = 32, SG = 64 };
-
-static const uint8_t seg_map[10] = {
-    /* 0 */ SA | SB | SC | SD | SE | SF,
-    /* 1 */ SB | SC,
-    /* 2 */ SA | SB | SG | SE | SD,
-    /* 3 */ SA | SB | SG | SC | SD,
-    /* 4 */ SF | SG | SB | SC,
-    /* 5 */ SA | SF | SG | SC | SD,
-    /* 6 */ SA | SF | SG | SE | SC | SD,
-    /* 7 */ SA | SB | SC,
-    /* 8 */ SA | SB | SC | SD | SE | SF | SG,
-    /* 9 */ SA | SB | SC | SD | SF | SG,
-};
-
-/* EPD_DrawRectangle takes inclusive end coordinates; wrap it so callers
- * can keep thinking in x,y,w,h like the old fb_fill_rect helper did. */
-static void fill_rect(int x, int y, int w, int h, uint16_t color)
+static uint32_t lv_tick_get_ms(void)
 {
-    if (w <= 0 || h <= 0) {
-        return;
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+/* LVGL renders into an L8 (1 byte/pixel grayscale) buffer; luminance 0
+ * is black and 255 is white. Threshold each pixel into the crowpanel
+ * component's packed 1bpp Paint image (s_fb), which app_main() then
+ * pushes to the panel via EPD_Display()/EPD_Display_Part(). */
+static void epd_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
+{
+    int32_t w = lv_area_get_width(area);
+    int32_t h = lv_area_get_height(area);
+
+    for (int32_t row = 0; row < h; row++) {
+        for (int32_t col = 0; col < w; col++) {
+            uint8_t gray = px_map[row * w + col];
+            Paint_SetPixel(area->x1 + col, area->y1 + row, gray < 128 ? BLACK : WHITE);
+        }
     }
-    EPD_DrawRectangle(x, y, x + w - 1, y + h, color, 1);
+
+    lv_display_flush_ready(disp);
 }
 
-static void draw_7seg_digit(int x, int y, int w, int h, int t, int d)
+static void lvgl_init(void)
 {
-    if (d < 0 || d > 9) {
-        return;
-    }
-    uint8_t s = seg_map[d];
-    int half = (h - t) / 2;         /* y offset of the middle segment */
+    lv_init();
+    lv_tick_set_cb(lv_tick_get_ms);
 
-    if (s & SA) fill_rect(x + t, y,             w - 2 * t, t, BLACK);
-    if (s & SG) fill_rect(x + t, y + half,      w - 2 * t, t, BLACK);
-    if (s & SD) fill_rect(x + t, y + h - t,     w - 2 * t, t, BLACK);
-    if (s & SF) fill_rect(x,         y + t,        t, half - t, BLACK);
-    if (s & SB) fill_rect(x + w - t, y + t,        t, half - t, BLACK);
-    if (s & SE) fill_rect(x,         y + half + t, t, h - half - 2 * t, BLACK);
-    if (s & SC) fill_rect(x + w - t, y + half + t, t, h - half - 2 * t, BLACK);
-}
-
-static void draw_colon(int x, int y, int size)
-{
-    fill_rect(x, y,            size, size, BLACK);
-    fill_rect(x, y + 3 * size, size, size, BLACK);
-}
-
-static void render_clock(const struct tm *t)
-{
     Paint_NewImage(s_fb, EPD_W, EPD_H, ROTATE_0, WHITE);
-    EPD_Full(WHITE);
 
-    /* Big HH:MM - digits 44x78, thickness 9 */
-    const int dw = 44, dh = 78, th = 9, gap = 10, colon_w = 10;
-    const int total = 4 * dw + 3 * gap + colon_w;   /* 216 px */
-    int x = (EPD_W - total) / 2;
-    const int y = 8;
+    s_disp = lv_display_create(EPD_W, EPD_H);
+    lv_display_set_default(s_disp);
+    lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_L8);
+    lv_display_set_buffers(s_disp, s_lv_buf, NULL, sizeof(s_lv_buf), LV_DISPLAY_RENDER_MODE_FULL);
+    lv_display_set_flush_cb(s_disp, epd_flush_cb);
 
+    lv_obj_t *scr = lv_screen_active();
+    lv_obj_set_style_bg_color(scr, lv_color_white(), 0);
+    lv_obj_set_style_border_width(scr, 0, 0);
+
+    s_time_label = lv_label_create(scr);
+    lv_obj_set_style_text_font(s_time_label, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_color(s_time_label, lv_color_black(), 0);
+    lv_obj_align(s_time_label, LV_ALIGN_TOP_MID, 0, 2);
+
+    s_date_label = lv_label_create(scr);
+    lv_obj_set_style_text_font(s_date_label, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(s_date_label, lv_color_black(), 0);
+    lv_obj_align(s_date_label, LV_ALIGN_BOTTOM_LEFT, 4, -6);
+
+    s_ampm_label = lv_label_create(scr);
+    lv_obj_set_style_text_font(s_ampm_label, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(s_ampm_label, lv_color_black(), 0);
+    lv_obj_align(s_ampm_label, LV_ALIGN_BOTTOM_RIGHT, -4, -6);
+}
+
+static void update_clock_ui(const struct tm *t)
+{
     bool is_pm = t->tm_hour >= 12;
     int hh = t->tm_hour % 12;
     if (hh == 0) {
         hh = 12;
     }
-    int mm = t->tm_min;
 
-    draw_7seg_digit(x, y, dw, dh, th, hh / 10);  x += dw + gap;
-    draw_7seg_digit(x, y, dw, dh, th, hh % 10);  x += dw + gap;
-    draw_colon(x, y + dh / 2 - 2 * colon_w, colon_w);
-    x += colon_w + gap;
-    draw_7seg_digit(x, y, dw, dh, th, mm / 10);  x += dw + gap;
-    draw_7seg_digit(x, y, dw, dh, th, mm % 10);
+    lv_label_set_text_fmt(s_time_label, "%d:%02d", hh, t->tm_min);
+    lv_label_set_text_fmt(s_date_label, "%02d-%02d-%04d",
+                          t->tm_mday, t->tm_mon + 1, t->tm_year + 1900);
+    lv_label_set_text(s_ampm_label, is_pm ? "PM" : "AM");
 
-    /* Small DD-MM-YYYY under the clock - digits 12x20, thickness 3 */
-    const int sw = 12, sh = 20, st = 3, sg = 4, dash_w = 8;
-    int dd = t->tm_mday, mo = t->tm_mon + 1, yy = t->tm_year + 1900;
-    int digits[8] = { dd / 10, dd % 10, mo / 10, mo % 10,
-                      (yy / 1000) % 10, (yy / 100) % 10,
-                      (yy / 10) % 10, yy % 10 };
-    const int date_total = 8 * sw + 7 * sg + 2 * (dash_w + sg);
-    int dx = (EPD_W - date_total) / 2;
-    const int dy = 96;
-
-    /* AM/PM indicator (8x16 font) in the margin to the right of the date */
-    EPD_ShowString(dx + date_total + sg + 10, dy + (sh - 16) / 2,
-                   is_pm ? "PM" : "AM", 16, BLACK);
-
-    for (int i = 0; i < 8; i++) {
-        draw_7seg_digit(dx, dy, sw, sh, st, digits[i]);
-        dx += sw + sg;
-        if (i == 1 || i == 3) {   /* dash after DD and MM */
-            fill_rect(dx, dy + sh / 2 - 1, dash_w, st, BLACK);
-            dx += dash_w + sg;
-        }
-    }
+    /* Render + flush synchronously so s_fb is fully up to date before
+     * the caller pushes it to the panel. */
+    lv_refr_now(s_disp);
 }
 
 /* ------------------------------------------------------------------ */
@@ -241,6 +227,8 @@ void app_main(void)
     EPD_GPIOInit();
     EPD_Clear();
 
+    lvgl_init();
+
     int part_count = 0;
     int last_min = -1;
 
@@ -252,7 +240,7 @@ void app_main(void)
 
         if (t.tm_min != last_min) {
             last_min = t.tm_min;
-            render_clock(&t);
+            update_clock_ui(&t);           /* renders via LVGL into s_fb */
 
             EPD_Init();                    /* wake from deep sleep */
 
@@ -267,6 +255,7 @@ void app_main(void)
             ESP_LOGI(TAG, "displayed %02d:%02d", t.tm_hour, t.tm_min);
         }
 
+        lv_timer_handler();
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

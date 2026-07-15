@@ -12,3 +12,9 @@ CONFIG_CROWPANEL_EPAPER_DC_PIN=13
 CONFIG_CROWPANEL_EPAPER_RST_PIN=10
 CONFIG_CROWPANEL_EPAPER_BUSY_PIN=9
 CONFIG_CROWPANEL_EPAPER_POWER_PIN=7
+
+# LVGL: use Kconfig-only configuration (no hand-written lv_conf.h), and
+# enable the font sizes the clock UI needs beyond the default Montserrat 14.
+CONFIG_LV_CONF_SKIP=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_48=y

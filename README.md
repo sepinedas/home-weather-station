@@ -1,18 +1,30 @@
 # CrowPanel ESP32-S3 2.13" E-Paper Clock (ESP-IDF)
 
-Displays the current time (12-hour HH:MM with an AM/PM indicator,
-seven-segment style) and date on the Elecrow CrowPanel 2.13" e-paper HMI
-(122x250, SSD1680Z). Time is synced via WiFi/SNTP. Every minute triggers
-a refresh; see the partial-refresh caveat below for why it currently
-always does a full (flashing) refresh rather than a fast partial one.
+Displays the current time (12-hour HH:MM with an AM/PM indicator) and
+date on the Elecrow CrowPanel 2.13" e-paper HMI (122x250, SSD1680Z).
+Time is synced via WiFi/SNTP. Every minute triggers a refresh; see the
+partial-refresh caveat below for why it currently always does a full
+(flashing) refresh rather than a fast partial one.
 
-Panel rendering (SPI/GPIO driving, RAM writes, full/partial refresh) is
+The UI is built with [LVGL](https://lvgl.io/) (`lvgl/lvgl`, pinned to
+`9.2.2`): `main.c` creates three `lv_label` widgets (time, date, AM/PM)
+styled with built-in Montserrat fonts. Panel power/SPI/refresh is
 delegated to the
 [`antunesls/crowpanel_epaper_driver_component`](https://github.com/antunesls/crowpanel_epaper_driver_component)
-managed component (see `main/idf_component.yml`); `main.c` only builds
-the clock face (seven-segment digits, colon, AM/PM label) into the
-component's image buffer via its `Paint_*`/`EPD_Draw*`/`EPD_ShowString`
-API.
+managed component (see `main/idf_component.yml` for both dependencies).
+
+LVGL renders into an 8-bit grayscale (`LV_COLOR_FORMAT_L8`) buffer;
+a flush callback (`epd_flush_cb` in `main.c`) thresholds each pixel and
+writes it into the crowpanel component's packed 1bpp image via
+`Paint_SetPixel()`, which is what actually gets pushed to the panel.
+
+We looked at `espressif/esp_lcd_ssd1681` (the more "native" ESP-IDF/LVGL
+pairing, with an official LVGL demo) as the panel-driving layer instead,
+but its source hardcodes a 200x200 resolution (gate count, RAM window
+math, and framebuffer size are all compile-time constants for the 1.54"
+SSD1681 panel) and can't drive this board's 250x122 SSD1680 panel
+without forking it. Given that, LVGL is layered on top of the existing
+crowpanel component instead, as described above.
 
 ## Pinout (fixed on this board)
 | Signal | GPIO |
@@ -37,12 +49,21 @@ idf.py menuconfig      # E-paper Clock Configuration -> WiFi SSID/password, time
 idf.py flash monitor
 ```
 
-The build fetches `crowpanel_epaper_driver_component` from the ESP
-Component Registry on first configure (requires network access from the
-build machine).
+The build fetches `crowpanel_epaper_driver_component` and `lvgl` from
+the ESP Component Registry on first configure (requires network access
+from the build machine).
 
 Tested layout: ESP-IDF v5.x. If WiFi/SNTP fails, the clock still runs
 but starts from the epoch until time is synced.
+
+### Known caveat: label layout not visually verified
+
+The label positions/sizes (Montserrat 48 for the time, Montserrat 24
+for the date and AM/PM) were sized against LVGL's documented font
+metrics, not against a rendered frame or real hardware — there was no
+way to preview this in the environment this was written in. If text
+clips, overlaps, or sits off-center on first flash, adjust the
+`lv_obj_align()` offsets and font sizes in `lvgl_init()` in `main.c`.
 
 ### Known caveat: partial refresh on the 2.13" panel
 
