@@ -1,0 +1,68 @@
+menu "CrowPanel E-Paper Configuration"
+
+    choice CROWPANEL_EPAPER_MODEL
+        prompt "E-Paper Display Model"
+        default CROWPANEL_EPAPER_4_2_INCH
+        help
+            Select the CrowPanel E-Paper display model.
+
+        config CROWPANEL_EPAPER_4_2_INCH
+            bool "4.2 Inch (400x300)"
+        
+        config CROWPANEL_EPAPER_2_13_INCH
+            bool "2.13 Inch (122x250)"
+    endchoice
+
+    config CROWPANEL_EPAPER_SPI_HOST
+        int "SPI Host Number (1=SPI2_HOST, 2=SPI3_HOST)"
+        default 1
+        help
+            SPI Host to use. 1 is usually SPI2_HOST (FSPI), 2 is SPI3_HOST (HSPI).
+    
+    config CROWPANEL_EPAPER_SPI_MOSI
+        int "SPI MOSI Pin"
+        default 11
+        help
+            GPIO number for SPI MOSI.
+    
+    config CROWPANEL_EPAPER_SPI_CLK
+        int "SPI CLK Pin"
+        default 12
+        help
+            GPIO number for SPI CLK.
+    
+    config CROWPANEL_EPAPER_SPI_CS
+        int "SPI CS Pin"
+        default 14 if CROWPANEL_EPAPER_2_13_INCH
+        default 45
+        help
+            GPIO number for SPI CS (Chip Select).
+    
+    config CROWPANEL_EPAPER_DC_PIN
+        int "DC Pin"
+        default 13 if CROWPANEL_EPAPER_2_13_INCH
+        default 46
+        help
+            GPIO number for DC (Data/Command).
+    
+    config CROWPANEL_EPAPER_RST_PIN
+        int "RST Pin"
+        default 10 if CROWPANEL_EPAPER_2_13_INCH
+        default 47
+        help
+            GPIO number for RST (Reset).
+    
+    config CROWPANEL_EPAPER_BUSY_PIN
+        int "BUSY Pin"
+        default 9 if CROWPANEL_EPAPER_2_13_INCH
+        default 48
+        help
+            GPIO number for BUSY.
+    
+    config CROWPANEL_EPAPER_POWER_PIN
+        int "Power Control Pin"
+        default 7
+        help
+            GPIO number for Power Control (set -1 to disable).
+
+endmenu
