@@ -176,6 +176,15 @@ void epd_clear_prev_ram(void)
     epd_wait_busy();
 }
 
+void epd_write_prev_image(const uint8_t *fb)
+{
+    epd_cmd(0x26);                  /* "previous image" RAM */
+    for (uint32_t i = 0; i < EPD_BUF_SIZE; i++) {
+        epd_data((uint8_t)~fb[i]);  /* same fb->RAM inversion as epd_write_image */
+    }
+    epd_wait_busy();
+}
+
 void epd_fill(uint8_t color)
 {
     uint8_t v = (color == EPD_COLOR_BLACK) ? 0x00 : 0xFF;
@@ -277,4 +286,35 @@ void fb_draw_colon(uint8_t *fb, int x, int y, int size)
 {
     fb_fill_rect(fb, x, y,            size, size, EPD_COLOR_BLACK);
     fb_fill_rect(fb, x, y + 3 * size, size, size, EPD_COLOR_BLACK);
+}
+
+/* ------------------------------------------------------------------ */
+/* AM/PM indicator (5x7 bitmap font, letters A/P/M only)               */
+/* ------------------------------------------------------------------ */
+
+#define AMPM_SCALE  2   /* glyph pixel size on screen */
+#define AMPM_GAP    2   /* px between the two letters */
+
+/* Each row is 5 bits wide (bit4 = leftmost column). */
+static const uint8_t FONT5X7_A[7] = { 0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11 };
+static const uint8_t FONT5X7_M[7] = { 0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11 };
+static const uint8_t FONT5X7_P[7] = { 0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10 };
+
+static void fb_draw_glyph(uint8_t *fb, int x, int y, int scale, const uint8_t rows[7])
+{
+    for (int r = 0; r < 7; r++) {
+        for (int c = 0; c < 5; c++) {
+            if (rows[r] & (0x10 >> c)) {
+                fb_fill_rect(fb, x + c * scale, y + r * scale, scale, scale,
+                             EPD_COLOR_BLACK);
+            }
+        }
+    }
+}
+
+void fb_draw_ampm(uint8_t *fb, int x, int y, bool is_pm)
+{
+    const uint8_t *first = is_pm ? FONT5X7_P : FONT5X7_A;
+    fb_draw_glyph(fb, x, y, AMPM_SCALE, first);
+    fb_draw_glyph(fb, x + (5 * AMPM_SCALE + AMPM_GAP), y, AMPM_SCALE, FONT5X7_M);
 }
