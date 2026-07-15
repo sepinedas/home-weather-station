@@ -1,2 +1,18 @@
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+
+# --- LVGL: monochrome (1bpp) rendering for the SSD1680 e-paper panel ---
+CONFIG_LV_COLOR_DEPTH_1=y
+
+# Tick source for lv_timer_handler()/animations
+CONFIG_LV_TICK_CUSTOM=y
+CONFIG_LV_TICK_CUSTOM_INCLUDE="esp_timer.h"
+CONFIG_LV_TICK_CUSTOM_SYS_TIME_EXPR="(esp_timer_get_time() / 1000LL)"
+
+# Fonts used by the clock UI (time, date, AM/PM badge)
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_48=y
+CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y
+
+CONFIG_LV_MEM_SIZE_KILOBYTES=48

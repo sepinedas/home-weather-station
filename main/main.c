@@ -2,7 +2,7 @@
  * CrowPanel ESP32-S3 2.13" e-paper clock (ESP-IDF)
  *
  * - Connects to WiFi and syncs time via SNTP
- * - Draws HH:MM as large seven-segment digits, date below
+ * - Renders HH:MM, an AM/PM badge, and the date via LVGL (main/lvgl_ui.c)
  * - Partial refresh every minute, full refresh every N partials
  *   to clean up ghosting
  */
@@ -23,6 +23,7 @@
 #include "nvs_flash.h"
 
 #include "epd213.h"
+#include "lvgl_ui.h"
 
 static const char *TAG = "epaper_clock";
 
@@ -30,8 +31,6 @@ static const char *TAG = "epaper_clock";
 
 static EventGroupHandle_t s_wifi_events;
 #define WIFI_CONNECTED_BIT  BIT0
-
-static uint8_t s_fb[EPD_BUF_SIZE];
 
 /* ------------------------------------------------------------------ */
 /* WiFi + SNTP                                                         */
@@ -99,57 +98,6 @@ static bool sync_time(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Rendering                                                           */
-/* ------------------------------------------------------------------ */
-
-static void render_clock(const struct tm *t)
-{
-    fb_clear(s_fb, EPD_COLOR_WHITE);
-
-    /* Big HH:MM - digits 44x78, thickness 9 */
-    const int dw = 44, dh = 78, th = 9, gap = 10, colon_w = 10;
-    const int total = 4 * dw + 3 * gap + colon_w;   /* 216 px */
-    int x = (EPD_WIDTH - total) / 2;
-    const int y = 8;
-
-    bool is_pm = t->tm_hour >= 12;
-    int hh = t->tm_hour % 12;
-    if (hh == 0) {
-        hh = 12;
-    }
-    int mm = t->tm_min;
-
-    fb_draw_7seg_digit(s_fb, x, y, dw, dh, th, hh / 10);  x += dw + gap;
-    fb_draw_7seg_digit(s_fb, x, y, dw, dh, th, hh % 10);  x += dw + gap;
-    fb_draw_colon(s_fb, x, y + dh / 2 - 2 * colon_w, colon_w);
-    x += colon_w + gap;
-    fb_draw_7seg_digit(s_fb, x, y, dw, dh, th, mm / 10);  x += dw + gap;
-    fb_draw_7seg_digit(s_fb, x, y, dw, dh, th, mm % 10);
-
-    /* Small DD-MM-YYYY under the clock - digits 12x20, thickness 3 */
-    const int sw = 12, sh = 20, st = 3, sg = 4, dash_w = 8;
-    int dd = t->tm_mday, mo = t->tm_mon + 1, yy = t->tm_year + 1900;
-    int digits[8] = { dd / 10, dd % 10, mo / 10, mo % 10,
-                      (yy / 1000) % 10, (yy / 100) % 10,
-                      (yy / 10) % 10, yy % 10 };
-    const int date_total = 8 * sw + 7 * sg + 2 * (dash_w + sg);
-    int dx = (EPD_WIDTH - date_total) / 2;
-    const int dy = 96;
-
-    /* AM/PM indicator in the margin to the right of the date */
-    fb_draw_ampm(s_fb, dx + date_total + sg + 10, dy + (sh - 7 * 2) / 2, is_pm);
-
-    for (int i = 0; i < 8; i++) {
-        fb_draw_7seg_digit(s_fb, dx, dy, sw, sh, st, digits[i]);
-        dx += sw + sg;
-        if (i == 1 || i == 3) {   /* dash after DD and MM */
-            fb_fill_rect(s_fb, dx, dy + sh / 2 - 1, dash_w, st, EPD_COLOR_BLACK);
-            dx += dash_w + sg;
-        }
-    }
-}
-
-/* ------------------------------------------------------------------ */
 /* Main                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -183,6 +131,8 @@ void app_main(void)
     epd_update_full();
     epd_clear_prev_ram();
 
+    lvgl_ui_init();
+
     int part_count = 0;
     int last_min = -1;
 
@@ -194,10 +144,10 @@ void app_main(void)
 
         if (t.tm_min != last_min) {
             last_min = t.tm_min;
-            render_clock(&t);
+            const uint8_t *fb = lvgl_ui_render(&t);
 
             epd_init();                    /* wake from deep sleep */
-            epd_write_image(s_fb);
+            epd_write_image(fb);
 
             if (part_count == 0) {
                 epd_update_full();
@@ -208,7 +158,7 @@ void app_main(void)
              * on screen now, so the next partial refresh diffs against the
              * real panel state instead of a stale frame - otherwise old
              * segments never fully clear and ghost behind the new digits. */
-            epd_write_prev_image(s_fb);
+            epd_write_prev_image(fb);
             part_count = (part_count + 1) % FULL_REFRESH_EVERY;
 
             epd_sleep();

@@ -57,22 +57,13 @@ void epd_write_prev_image(const uint8_t *fb); /* sync 0x26 to fb so the next
 void epd_update_full(void);                   /* global (flashing) refresh    */
 void epd_update_partial(void);                /* fast partial refresh         */
 
-/* Framebuffer drawing (1 = black). Buffer must be EPD_BUF_SIZE bytes. */
+/* Framebuffer drawing (1 = black). Buffer must be EPD_BUF_SIZE bytes.
+ * The clock face itself is rendered by LVGL (see lvgl_ui.c/.h); these
+ * remain as the low-level primitives its monochrome display driver
+ * writes through. */
 void fb_clear(uint8_t *fb, uint8_t color);
 void fb_set_pixel(uint8_t *fb, int x, int y, uint8_t color);
 void fb_fill_rect(uint8_t *fb, int x, int y, int w, int h, uint8_t color);
-
-/* Seven-segment digit renderer (no font tables needed).
- * x,y   : top-left corner
- * w,h   : digit size in pixels
- * t     : segment thickness in pixels
- * d     : 0..9
- */
-void fb_draw_7seg_digit(uint8_t *fb, int x, int y, int w, int h, int t, int d);
-void fb_draw_colon(uint8_t *fb, int x, int y, int size);
-
-/* Small "AM"/"PM" indicator (5x7 bitmap font, scaled 2x -> 12x18 px). */
-void fb_draw_ampm(uint8_t *fb, int x, int y, bool is_pm);
 
 #ifdef __cplusplus
 }
