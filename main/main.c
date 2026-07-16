@@ -2,7 +2,9 @@
  * CrowPanel ESP32-S3 2.13" e-paper clock (ESP-IDF)
  *
  * - Connects to WiFi and syncs time via SNTP
- * - Draws HH:MM as large seven-segment digits, date below
+ * - Draws HH:MM and the date with real proportional fonts via gfx.c, a
+ *   C port of the Adafruit_GFX drawing API GxEPD2 itself is built on
+ *   (see main/gfx.h)
  * - Partial refresh every minute, full refresh every N partials
  *   to clean up ghosting
  */
@@ -23,6 +25,10 @@
 #include "nvs_flash.h"
 
 #include "epd213.h"
+#include "gfx.h"
+#include "fonts/FreeSansBold24pt7b.h"
+#include "fonts/FreeSansBold12pt7b.h"
+#include "fonts/FreeSans9pt7b.h"
 
 static const char *TAG = "epaper_clock";
 
@@ -32,6 +38,7 @@ static EventGroupHandle_t s_wifi_events;
 #define WIFI_CONNECTED_BIT  BIT0
 
 static uint8_t s_fb[EPD_BUF_SIZE];
+static gfx_t s_gfx;
 
 /* ------------------------------------------------------------------ */
 /* WiFi + SNTP                                                         */
@@ -102,51 +109,63 @@ static bool sync_time(void)
 /* Rendering                                                           */
 /* ------------------------------------------------------------------ */
 
+/* Draws str with the given font, horizontally centered on cx, baseline at
+ * baseline_y - the same "measure, then draw at a computed cursor" pattern
+ * GxEPD2 examples use via getTextBounds()/setCursor()/print(). */
+static void gfx_print_centered(gfx_t *g, const char *str, const GFXfont *font,
+                                int16_t cx, int16_t baseline_y)
+{
+    gfx_set_font(g, font);
+    int16_t x1, y1;
+    uint16_t w, h;
+    gfx_get_text_bounds(g, str, 0, 0, &x1, &y1, &w, &h);
+    (void)y1; (void)h;
+    gfx_set_cursor(g, cx - w / 2 - x1, baseline_y);
+    gfx_print(g, str, EPD_COLOR_BLACK);
+}
+
 static void render_clock(const struct tm *t)
 {
     fb_clear(s_fb, EPD_COLOR_WHITE);
-
-    /* Big HH:MM - digits 44x78, thickness 9 */
-    const int dw = 44, dh = 78, th = 9, gap = 10, colon_w = 10;
-    const int total = 4 * dw + 3 * gap + colon_w;   /* 216 px */
-    int x = (EPD_WIDTH - total) / 2;
-    const int y = 8;
 
     bool is_pm = t->tm_hour >= 12;
     int hh = t->tm_hour % 12;
     if (hh == 0) {
         hh = 12;
     }
-    int mm = t->tm_min;
 
-    fb_draw_7seg_digit(s_fb, x, y, dw, dh, th, hh / 10);  x += dw + gap;
-    fb_draw_7seg_digit(s_fb, x, y, dw, dh, th, hh % 10);  x += dw + gap;
-    fb_draw_colon(s_fb, x, y + dh / 2 - 2 * colon_w, colon_w);
-    x += colon_w + gap;
-    fb_draw_7seg_digit(s_fb, x, y, dw, dh, th, mm / 10);  x += dw + gap;
-    fb_draw_7seg_digit(s_fb, x, y, dw, dh, th, mm % 10);
+    char time_str[8];
+    snprintf(time_str, sizeof(time_str), "%d:%02d", hh, t->tm_min);
+    char date_str[16];
+    snprintf(date_str, sizeof(date_str), "%02d-%02d-%04d",
+             t->tm_mday, t->tm_mon + 1, t->tm_year + 1900);
+    const char *ampm_str = is_pm ? "PM" : "AM";
 
-    /* Small DD-MM-YYYY under the clock - digits 12x20, thickness 3 */
-    const int sw = 12, sh = 20, st = 3, sg = 4, dash_w = 8;
-    int dd = t->tm_mday, mo = t->tm_mon + 1, yy = t->tm_year + 1900;
-    int digits[8] = { dd / 10, dd % 10, mo / 10, mo % 10,
-                      (yy / 1000) % 10, (yy / 100) % 10,
-                      (yy / 10) % 10, yy % 10 };
-    const int date_total = 8 * sw + 7 * sg + 2 * (dash_w + sg);
-    int dx = (EPD_WIDTH - date_total) / 2;
-    const int dy = 96;
+    /* Big HH:MM near the top */
+    gfx_print_centered(&s_gfx, time_str, &FreeSansBold24pt7b, EPD_WIDTH / 2, 55);
 
-    /* AM/PM indicator in the margin to the right of the date */
-    fb_draw_ampm(s_fb, dx + date_total + sg + 10, dy + (sh - 7 * 2) / 2, is_pm);
+    /* Date + AM/PM badge as a centered group below it */
+    int16_t dx1, dy1, ax1, ay1;
+    uint16_t dw, dh, aw, ah;
 
-    for (int i = 0; i < 8; i++) {
-        fb_draw_7seg_digit(s_fb, dx, dy, sw, sh, st, digits[i]);
-        dx += sw + sg;
-        if (i == 1 || i == 3) {   /* dash after DD and MM */
-            fb_fill_rect(s_fb, dx, dy + sh / 2 - 1, dash_w, st, EPD_COLOR_BLACK);
-            dx += dash_w + sg;
-        }
-    }
+    gfx_set_font(&s_gfx, &FreeSans9pt7b);
+    gfx_get_text_bounds(&s_gfx, date_str, 0, 0, &dx1, &dy1, &dw, &dh);
+
+    gfx_set_font(&s_gfx, &FreeSansBold12pt7b);
+    gfx_get_text_bounds(&s_gfx, ampm_str, 0, 0, &ax1, &ay1, &aw, &ah);
+    (void)dy1; (void)dh; (void)ay1; (void)ah;
+
+    const int16_t gap = 10;
+    const int16_t baseline_y = 102;
+    int16_t start_x = EPD_WIDTH / 2 - (dw + gap + aw) / 2;
+
+    gfx_set_font(&s_gfx, &FreeSans9pt7b);
+    gfx_set_cursor(&s_gfx, start_x - dx1, baseline_y);
+    gfx_print(&s_gfx, date_str, EPD_COLOR_BLACK);
+
+    gfx_set_font(&s_gfx, &FreeSansBold12pt7b);
+    gfx_set_cursor(&s_gfx, start_x + dw + gap - ax1, baseline_y);
+    gfx_print(&s_gfx, ampm_str, EPD_COLOR_BLACK);
 }
 
 /* ------------------------------------------------------------------ */
@@ -175,6 +194,8 @@ void app_main(void)
     if (!sync_time()) {
         ESP_LOGW(TAG, "SNTP failed, clock will start from epoch");
     }
+
+    gfx_init(&s_gfx, s_fb, EPD_WIDTH, EPD_HEIGHT);
 
     /* Bring up the panel: power, init, white it out once */
     epd_power_on();

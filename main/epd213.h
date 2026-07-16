@@ -13,7 +13,6 @@
 #pragma once
 
 #include <stdint.h>
-#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -61,18 +60,6 @@ void epd_update_partial(void);                /* fast partial refresh         */
 void fb_clear(uint8_t *fb, uint8_t color);
 void fb_set_pixel(uint8_t *fb, int x, int y, uint8_t color);
 void fb_fill_rect(uint8_t *fb, int x, int y, int w, int h, uint8_t color);
-
-/* Seven-segment digit renderer (no font tables needed).
- * x,y   : top-left corner
- * w,h   : digit size in pixels
- * t     : segment thickness in pixels
- * d     : 0..9
- */
-void fb_draw_7seg_digit(uint8_t *fb, int x, int y, int w, int h, int t, int d);
-void fb_draw_colon(uint8_t *fb, int x, int y, int size);
-
-/* Small "AM"/"PM" indicator (5x7 bitmap font, scaled 2x -> 12x18 px). */
-void fb_draw_ampm(uint8_t *fb, int x, int y, bool is_pm);
 
 #ifdef __cplusplus
 }
