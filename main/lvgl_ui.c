@@ -18,6 +18,7 @@
 
 #include <stdbool.h>
 
+#include "esp_timer.h"
 #include "lvgl.h"
 #include "epd213.h"
 
@@ -26,6 +27,7 @@
 
 static uint8_t s_mono_buf[MONO_ROW_BYTES * EPD_HEIGHT];
 static uint8_t s_epd_fb[EPD_BUF_SIZE];
+static int64_t s_last_tick_us;
 
 static lv_disp_draw_buf_t s_draw_buf;
 static lv_disp_drv_t s_disp_drv;
@@ -86,6 +88,7 @@ static void disp_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 void lvgl_ui_init(void)
 {
     lv_init();
+    s_last_tick_us = esp_timer_get_time();
 
     lv_disp_draw_buf_init(&s_draw_buf, s_mono_buf, NULL,
                            LV_HOR_RES_PADDED * EPD_HEIGHT);
@@ -170,6 +173,10 @@ const uint8_t *lvgl_ui_render(const struct tm *t)
                            wdays[wday], t->tm_mday, months[mon],
                            t->tm_year + 1900);
     lv_obj_align(s_date_label, LV_ALIGN_TOP_MID, 0, 94);
+
+    int64_t now_us = esp_timer_get_time();
+    lv_tick_inc((uint32_t)((now_us - s_last_tick_us) / 1000));
+    s_last_tick_us = now_us;
 
     lv_timer_handler();
 
