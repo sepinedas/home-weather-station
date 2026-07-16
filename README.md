@@ -2,10 +2,11 @@
 
 Displays the current time (12-hour HH:MM with an AM/PM indicator) and
 date on the Elecrow CrowPanel 2.13" e-paper HMI (122x250, SSD1680Z).
-Time is synced via WiFi/SNTP. Partial refresh every minute; a full
-refresh every 10 updates clears ghosting, and the controller's
-previous-image RAM is re-synced after every refresh so stale digit
-segments don't linger between updates.
+Time is synced via WiFi/SNTP. Partial refresh every minute; every 4th
+update instead does a black->white double-flash full refresh
+(`epd_flash_clean()`) to reset pixel dipoles before drawing, and the
+controller's previous-image RAM is re-synced after every refresh so
+stale digit segments don't linger between updates.
 
 Graphics are drawn with `main/gfx.c`, a plain-C port of the
 [Adafruit_GFX](https://github.com/adafruit/Adafruit-GFX-Library) drawing
