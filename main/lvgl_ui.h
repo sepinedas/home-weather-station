@@ -1,10 +1,11 @@
 /*
  * lvgl_ui.h - LVGL-based clock face for the 250x122 e-paper panel.
  *
- * LVGL renders through a monochrome (1bpp) display driver into a private
- * scratch buffer; lvgl_ui_render() drives one layout+draw pass and returns
- * a pointer to an EPD_BUF_SIZE buffer already in the SSD1680 RAM layout,
- * ready to hand to epd_write_image()/epd_write_prev_image().
+ * LVGL renders normally (16bpp) into a private buffer; the display
+ * driver's flush_cb thresholds each pixel down to black/white.
+ * lvgl_ui_render() drives one layout+draw pass and returns a pointer to
+ * an EPD_BUF_SIZE buffer already in the SSD1680 RAM layout, ready to
+ * hand to epd_write_image()/epd_write_prev_image().
  */
 #pragma once
 

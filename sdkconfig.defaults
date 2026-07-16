@@ -1,8 +1,12 @@
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 
-# --- LVGL: monochrome (1bpp) rendering for the SSD1680 e-paper panel ---
-CONFIG_LV_COLOR_DEPTH_1=y
+# --- LVGL: renders normally in 16bpp; lvgl_ui.c's flush_cb thresholds ---
+# --- each pixel's brightness down to the SSD1680's 1bpp framebuffer.  ---
+# (LV_COLOR_DEPTH=1 + set_px_cb was tried first but crashed inside
+# LVGL's label draw routines - a much less exercised code path - so
+# this sticks to the standard, well tested full-color render.)
+CONFIG_LV_COLOR_DEPTH_16=y
 
 # lvgl_ui.c drives lv_tick_inc() itself from esp_timer, so no custom tick
 # Kconfig is needed here (and none of it is picked up on a build that
