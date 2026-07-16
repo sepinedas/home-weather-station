@@ -2,9 +2,9 @@
  * CrowPanel ESP32-S3 2.13" e-paper clock (ESP-IDF)
  *
  * - Connects to WiFi and syncs time via SNTP
- * - Draws HH:MM and the date with real proportional fonts via gfx.c, a
- *   C port of the Adafruit_GFX drawing API GxEPD2 itself is built on
- *   (see main/gfx.h)
+ * - Draws HH:MM as seven-segment digits (see main/sevenseg.h), AM/PM and
+ *   the date with real proportional fonts via gfx.c, a C port of the
+ *   Adafruit_GFX drawing API GxEPD2 itself is built on (see main/gfx.h)
  * - Partial refresh every minute, full refresh every N partials
  *   to clean up ghosting
  */
@@ -27,8 +27,8 @@
 #include "epd213.h"
 #include "fonts/FreeSans9pt7b.h"
 #include "fonts/FreeSansBold12pt7b.h"
-#include "fonts/FreeSansBold24pt7b.h"
 #include "gfx.h"
+#include "sevenseg.h"
 
 static const char *TAG = "epaper_clock";
 
@@ -138,39 +138,65 @@ static void render_clock(const struct tm *t) {
   int mo = (t->tm_mon + 1) % 100;
   int yy = (t->tm_year + 1900) % 10000;
 
-  char time_str[10];
-  snprintf(time_str, sizeof(time_str), "%d:%02d", hh, mn);
   char date_str[18];
   snprintf(date_str, sizeof(date_str), "%02d-%02d-%04d", dd, mo, yy);
   const char *ampm_str = is_pm ? "PM" : "AM";
 
-  /* Time + AM/PM as one centered group near the top, AM/PM baseline-
-   * aligned right after the digits - this whole group sits inside
-   * EPD_TIME_BAND_HEIGHT so a ghosting-cleanup full refresh can be
-   * windowed to just this band (see app_main()). */
-  const int16_t time_baseline_y = 55;
-  const int16_t gap = 8;
-  int16_t tx1, ty1, ax1, ay1;
-  uint16_t tw, th, aw, ah;
+  /* Hour/minutes as seven-segment digits, AM/PM as text right after them -
+   * one centered group near the top of the panel. */
+  const int16_t digit_w = 26;
+  const int16_t digit_h = 46;
+  const int16_t digit_thickness = 6;
+  const int16_t digit_gap = 4;   /* between the two digits of a field */
+  const int16_t colon_gap = 6;   /* field <-> colon spacing */
+  const int16_t colon_size = 8;
+  const int16_t digit_y = 8;
+  const int16_t ampm_gap = 8;
 
-  gfx_set_font(&s_gfx, &FreeSansBold24pt7b);
-  gfx_get_text_bounds(&s_gfx, time_str, 0, 0, &tx1, &ty1, &tw, &th);
+  bool show_hh_tens = hh >= 10;
+  int hh_tens = hh / 10;
+  int hh_ones = hh % 10;
+  int mn_tens = mn / 10;
+  int mn_ones = mn % 10;
 
+  int16_t hour_field_w =
+      show_hh_tens ? (2 * digit_w + digit_gap) : digit_w;
+  int16_t minute_field_w = 2 * digit_w + digit_gap;
+  int16_t clock_w =
+      hour_field_w + colon_gap + colon_size + colon_gap + minute_field_w;
+
+  int16_t ax1, ay1;
+  uint16_t aw, ah;
   gfx_set_font(&s_gfx, &FreeSansBold12pt7b);
   gfx_get_text_bounds(&s_gfx, ampm_str, 0, 0, &ax1, &ay1, &aw, &ah);
-  (void)ty1;
-  (void)th;
   (void)ay1;
   (void)ah;
 
-  int16_t start_x = EPD_WIDTH / 2 - (tw + gap + aw) / 2;
+  int16_t start_x = EPD_WIDTH / 2 - (clock_w + ampm_gap + aw) / 2;
 
-  gfx_set_font(&s_gfx, &FreeSansBold24pt7b);
-  gfx_set_cursor(&s_gfx, start_x - tx1, time_baseline_y);
-  gfx_print(&s_gfx, time_str, EPD_COLOR_BLACK);
+  int16_t x = start_x;
+  if (show_hh_tens) {
+    sevenseg_draw_digit(&s_gfx, x, digit_y, digit_w, digit_h,
+                         digit_thickness, hh_tens, EPD_COLOR_BLACK);
+    x += digit_w + digit_gap;
+  }
+  sevenseg_draw_digit(&s_gfx, x, digit_y, digit_w, digit_h, digit_thickness,
+                       hh_ones, EPD_COLOR_BLACK);
+  x += digit_w + colon_gap;
+
+  sevenseg_draw_colon(&s_gfx, x + colon_size / 2, digit_y, digit_h,
+                       colon_size, EPD_COLOR_BLACK);
+  x += colon_size + colon_gap;
+
+  sevenseg_draw_digit(&s_gfx, x, digit_y, digit_w, digit_h, digit_thickness,
+                       mn_tens, EPD_COLOR_BLACK);
+  x += digit_w + digit_gap;
+  sevenseg_draw_digit(&s_gfx, x, digit_y, digit_w, digit_h, digit_thickness,
+                       mn_ones, EPD_COLOR_BLACK);
+  x += digit_w;
 
   gfx_set_font(&s_gfx, &FreeSansBold12pt7b);
-  gfx_set_cursor(&s_gfx, start_x + tw + gap - ax1, time_baseline_y);
+  gfx_set_cursor(&s_gfx, x + ampm_gap - ax1, digit_y + digit_h - 4);
   gfx_print(&s_gfx, ampm_str, EPD_COLOR_BLACK);
 
   /* Date alone, centered lower - outside the time band */
