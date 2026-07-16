@@ -134,11 +134,18 @@ static void render_clock(const struct tm *t)
         hh = 12;
     }
 
-    char time_str[8];
-    snprintf(time_str, sizeof(time_str), "%d:%02d", hh, t->tm_min);
-    char date_str[16];
-    snprintf(date_str, sizeof(date_str), "%02d-%02d-%04d",
-             t->tm_mday, t->tm_mon + 1, t->tm_year + 1900);
+    /* struct tm fields are plain int, so GCC can't otherwise prove these
+     * fit the buffers below (-Werror=format-truncation) - mod them into
+     * their actual valid ranges so it can. */
+    int mn = t->tm_min % 100;
+    int dd = t->tm_mday % 100;
+    int mo = (t->tm_mon + 1) % 100;
+    int yy = (t->tm_year + 1900) % 10000;
+
+    char time_str[10];
+    snprintf(time_str, sizeof(time_str), "%d:%02d", hh, mn);
+    char date_str[18];
+    snprintf(date_str, sizeof(date_str), "%02d-%02d-%04d", dd, mo, yy);
     const char *ampm_str = is_pm ? "PM" : "AM";
 
     /* Big HH:MM near the top */
